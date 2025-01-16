@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMODA Voice Sales Assistant</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .chat-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+
+        .message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: 20%;
+        }
+
+        .assistant-message {
+            background-color: #f5f5f5;
+            margin-right: 20%;
+        }
+
+        .controls {
+            text-align: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            margin: 5px;
+        }
+
+        #recordButton {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        #recordButton.recording {
+            background-color: #f44336;
+        }
+
+        .status {
+            text-align: center;
+            margin-top: 10px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 style="text-align: center;">OMODA Voice Sales Assistant</h1>
+        <div class="chat-container" id="chatContainer"></div>
+        <div class="controls">
+            <button id="recordButton">Start Recording</button>
+        </div>
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        const API_KEY = 'OPEN_AI_KEY'; // Replace with your API key
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+
+        const recordButton = document.getElementById('recordButton');
+        const chatContainer = document.getElementById('chatContainer');
+        const statusDiv = document.getElementById('status');
+        const WELCOME_MESSAGE = "Good morning! Welcome to OMODA. My name is Olivia How can I assist you today?";
+ // Function to play the welcome message
+            async function playWelcomeMessage() {
+            try {
+                updateStatus('Playing welcome message...');
+                addMessage('assistant', WELCOME_MESSAGE);
+
+                const speechResponse = await fetch('https://api.openai.com/v1/audio/speech', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: 'tts-1',
+                        voice: 'alloy',
+                        input: WELCOME_MESSAGE
+                    })
+                });
+
+                if (!speechResponse.ok) {
+                    throw new Error(`Speech conversion failed: ${speechResponse.status}`);
+                }
+
+                const audioBlob = await speechResponse.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audio = new Audio(audioUrl);
+                
+                audio.onended = () => {
+                    URL.revokeObjectURL(audioUrl);
+                    updateStatus('Ready to record');
+                };
+
+                audio.play();
+
+            } catch (error) {
+                console.error('Error playing welcome message:', error);
+                updateStatus('Error playing welcome message');
+            }
+        }
+        // Request microphone permission on page load
+        async function checkMicrophonePermission() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+                updateStatus('Initializing...');
+                await playWelcomeMessage();
+            } catch (error) {
+                console.error('Microphone permission denied:', error);
+                updateStatus('Error: Microphone permission required');
+                recordButton.disabled = true;
+            }
+        }
+
+        checkMicrophonePermission();
+
+        recordButton.addEventListener('click', toggleRecording);
+
+        async function toggleRecording() {
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        }
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioChunks = []; // Clear previous chunks
+                
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm'
+                });
+
+                mediaRecorder.addEventListener('dataavailable', event => {
+                    if (event.data.size > 0) audioChunks.push(event.data);
+                });
+
+                mediaRecorder.addEventListener('stop', async () => {
+                    try {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        await processAudio(audioBlob);
+                    } catch (error) {
+                        console.error('Error processing recording:', error);
+                        updateStatus('Error processing recording');
+                    } finally {
+                        stream.getTracks().forEach(track => track.stop());
+                    }
+                });
+
+                mediaRecorder.start();
+                isRecording = true;
+                recordButton.textContent = 'Stop Recording';
+                recordButton.classList.add('recording');
+                updateStatus('Recording... Click to stop');
+
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                updateStatus('Error accessing microphone');
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                isRecording = false;
+                recordButton.textContent = 'Start Recording';
+                recordButton.classList.remove('recording');
+                updateStatus('Processing audio...');
+            }
+        }
+
+        async function processAudio(kishan) {
+            try {
+                // Convert webm to mp3 format
+                const formData = new FormData();
+                formData.append('file', kishan, 'recording.webm');
+                formData.append('model', 'whisper-1');
+
+                updateStatus('Converting speech to text...');
+                
+                const transcriptionResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`
+                    },
+                    body: formData
+                });
+
+                if (!transcriptionResponse.ok) {
+                    throw new Error(`Transcription failed: ${transcriptionResponse.status}`);
+                }
+
+                const transcriptionData = await transcriptionResponse.json();
+                const userText = transcriptionData.text;
+                addMessage('user', userText);
+
+                updateStatus('Getting response...');
+
+                const chatResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: 'gpt-4',
+                        messages: [
+                            {
+                                role: 'system',
+                                content: `You are Olivia, a professional car sales representative at OMODA, a leading automotive dealership. You specialize in electric and hybrid vehicles.
+
+# Core Objectives
+- Engage customers professionally and warmly
+- Gather customer information systematically
+- Provide accurate information about OMODA vehicles
+- Guide customers through the test drive booking process
+- Convert interest into sales opportunities
+- Keep all responses concise.
+
+# Key Vehicle Information
+OMODA E5 (Electric):
+- 204bhp electric motor
+- Fast charging capability (30% to 80% in 28 minutes)
+- Suitable for daily commutes and long trips
+
+Current Promotion:
+- £500 incentive for post-test drive purchases
+
+# Communication Style
+- Professional and warm
+- Clear and concise
+- Patient and attentive
+- Solution-oriented
+- Positive and enthusiastic`
+                            },
+                            {
+                                role: 'user',
+                                content: userText
+                            }
+                        ]
+                    })
+                });
+
+                if (!chatResponse.ok) {
+                    throw new Error(`Chat response failed: ${chatResponse.status}`);
+                }
+
+                const chatData = await chatResponse.json();
+                const assistantText = chatData.choices[0].message.content;
+                addMessage('assistant', assistantText);
+
+                updateStatus('Converting response to speech...');
+
+                const speechResponse = await fetch('https://api.openai.com/v1/audio/speech', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: 'tts-1',
+                        voice: 'alloy',
+                        input: assistantText
+                    })
+                });
+
+                if (!speechResponse.ok) {
+                    throw new Error(`Speech conversion failed: ${speechResponse.status}`);
+                }
+
+                const audioBlob = await speechResponse.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audio = new Audio(audioUrl);
+                
+                audio.onended = () => {
+                    URL.revokeObjectURL(audioUrl);
+                    updateStatus('Ready to record');
+                };
+
+                audio.play();
+                updateStatus('Playing response...');
+
+            } catch (error) {
+                console.error('Error in processAudio:', error);
+                updateStatus(`Error: ${error.message}`);
+            }
+        }
+
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}-message`;
+            messageDiv.textContent = `${role === 'assistant' ? '🤖 Olivia: ' : '👤 You: '}${content}`;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function updateStatus(message) {
+            statusDiv.textContent = message;
+        }
+    </script>
+</body>
+</html>
