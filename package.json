@@ -1,0 +1,27 @@
+{
+  "name": "omoda-voice-assistant",
+  "version": "1.0.0",
+  "description": "OMODA Voice Sales Assistant",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "npx ts-node src/index.ts",
+    "dev": "npx ts-node-dev --respawn src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.1",
+    "node-microphone": "^0.1.6",
+    "node-record-lpcm16": "^1.0.1",
+    "openai": "^4.26.0",
+    "speaker": "^0.5.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.16",
+    "ts-node-dev": "^2.0.0"
+  }
+}
