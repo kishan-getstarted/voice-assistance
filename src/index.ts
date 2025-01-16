@@ -1,3 +1,4 @@
+// index.ts
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
 import fs from 'fs';
@@ -12,6 +13,98 @@ const execAsync = promisify(exec);
 interface Message {
     role: 'system' | 'user' | 'assistant';
     content: string;
+}
+
+class StreamingTextToSpeech {
+    private openai: OpenAI;
+    private audioFolder: string;
+    private currentlyPlaying: boolean;
+    private audioQueue: string[];
+    private processingQueue: boolean;
+
+    constructor(openai: OpenAI, audioFolder: string) {
+        this.openai = openai;
+        this.audioFolder = audioFolder;
+        this.currentlyPlaying = false;
+        this.audioQueue = [];
+        this.processingQueue = false;
+    }
+
+    private splitIntoSentences(text: string): string[] {
+        // Split on periods followed by space or end of string
+        return text
+            .split('.')
+            .map(sentence => sentence.trim())
+            .filter(sentence => sentence.length > 0);
+    }
+
+    private async convertToSpeech(text: string, index: number): Promise<string> {
+        const speechFile = path.join(this.audioFolder, `output_${index}.mp3`);
+        
+        const mp3 = await this.openai.audio.speech.create({
+            model: 'tts-1',
+            voice: 'alloy',
+            input: text
+        });
+
+        const buffer = Buffer.from(await mp3.arrayBuffer());
+        fs.writeFileSync(speechFile, buffer);
+        
+        return speechFile;
+    }
+
+    private async playAudio(audioFile: string): Promise<void> {
+        this.currentlyPlaying = true;
+        try {
+            await execAsync(`play ${audioFile}`);
+        } finally {
+            this.currentlyPlaying = false;
+            // Clean up the temporary audio file
+            fs.unlinkSync(audioFile);
+        }
+    }
+
+    private async processNextInQueue(): Promise<void> {
+        if (this.processingQueue || this.audioQueue.length === 0) return;
+
+        this.processingQueue = true;
+        while (this.audioQueue.length > 0) {
+            const audioFile = this.audioQueue.shift();
+            if (audioFile) {
+                await this.playAudio(audioFile);
+            }
+        }
+        this.processingQueue = false;
+    }
+
+    public async streamText(text: string): Promise<void> {
+        const sentences = this.splitIntoSentences(text);
+        
+        // Start converting all sentences to speech immediately
+        const conversionPromises = sentences.map((sentence, index) => 
+            this.convertToSpeech(sentence, index)
+        );
+
+        // As each conversion completes, add it to the queue and start playing if not already playing
+        for (let i = 0; i < conversionPromises.length; i++) {
+            try {
+                const audioFile = await conversionPromises[i];
+                this.audioQueue.push(audioFile);
+                
+                // If this is the first sentence, start processing the queue
+                if (i === 0) {
+                    this.processNextInQueue();
+                }
+            } catch (error) {
+                console.error(`Error converting sentence ${i} to speech:`, error);
+            }
+        }
+
+        // Wait for all audio to finish playing
+        while (this.audioQueue.length > 0 || this.currentlyPlaying) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+    }
 }
 
 class VoiceSalesAssistant {
@@ -74,18 +167,6 @@ class VoiceSalesAssistant {
         }
     }
 
-    private async playAudio(audioFile: string): Promise<void> {
-        // Using sox for audio playback
-        const command = `play ${audioFile}`;
-        
-        try {
-            await execAsync(command);
-        } catch (error) {
-            console.error('Error playing audio:', error);
-            throw error;
-        }
-    }
-
     private async speechToText(audioFile: string): Promise<string> {
         const audioStream = fs.createReadStream(audioFile);
         const transcript = await this.openai.audio.transcriptions.create({
@@ -115,20 +196,10 @@ class VoiceSalesAssistant {
         }
     }
 
-    private async textToSpeech(text: string): Promise<string> {
+    private async textToSpeech(text: string): Promise<void> {
         try {
-            const speechFile = path.join(this.audioFolder, 'output.mp3');
-            
-            const mp3 = await this.openai.audio.speech.create({
-                model: 'tts-1',
-                voice: 'alloy',
-                input: text
-            });
-
-            const buffer = Buffer.from(await mp3.arrayBuffer());
-            fs.writeFileSync(speechFile, buffer);
-
-            return speechFile;
+            const streamingTTS = new StreamingTextToSpeech(this.openai, this.audioFolder);
+            await streamingTTS.streamText(text);
         } catch (error) {
             console.error('Error in text-to-speech:', error);
             throw error;
@@ -142,8 +213,7 @@ class VoiceSalesAssistant {
             // Initial greeting
             const greeting = "Welcome to OMODA! I'm Olivia. How can I assist you today?";
             console.log('🤖 Assistant:', greeting);
-            const greetingAudio = await this.textToSpeech(greeting);
-            await this.playAudio(greetingAudio);
+            await this.textToSpeech(greeting);
 
             while (true) {
                 try {
@@ -162,16 +232,14 @@ class VoiceSalesAssistant {
                         userInput.toLowerCase().includes('bye')) {
                         const farewell = "Thank you for visiting OMODA! Have a great day!";
                         console.log('🤖 Assistant:', farewell);
-                        const farewellAudio = await this.textToSpeech(farewell);
-                        await this.playAudio(farewellAudio);
+                        await this.textToSpeech(farewell);
                         break;
                     }
 
                     // Get and speak assistant's response
                     const response = await this.getAssistantResponse(userInput);
                     console.log('🤖 Assistant:', response);
-                    const responseAudio = await this.textToSpeech(response);
-                    await this.playAudio(responseAudio);
+                    await this.textToSpeech(response);
 
                 } catch (error) {
                     console.error('Error in conversation loop:', error);
